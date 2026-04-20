@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>소주 갤러그 - 사진 속 형을 지켜라!</title>
+    <style>
+        body { margin: 0; background: #000; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
+        #game-container { position: relative; width: 600px; height: 800px; border: 4px solid #444; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); }
+        canvas { display: block; background: #000; width: 100%; height: 100%; }
+        #ui { position: absolute; top: 15px; left: 15px; font-size: 20px; font-weight: bold; pointer-events: none; width: calc(100% - 30px); display: flex; justify-content: space-between; text-shadow: 2px 2px 0 #000; }
+        #game-over { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; z-index: 10; }
+        button { padding: 15px 30px; font-size: 20px; cursor: pointer; background: #2ecc71; border: none; color: white; margin-top: 20px; font-family: inherit; font-weight: bold; text-transform: uppercase; }
+        button:hover { background: #fff; color: #000; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui">
+        <div>SCORE: <span id="score">0</span></div>
+        <div>LIVES: <span id="lives">3</span></div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="game-over">
+        <h1 style="color:#e74c3c; font-size: 60px; margin-bottom: 10px;">GAME OVER</h1>
+        <p style="font-size: 24px;">형이 취해버렸습니다...</p>
+        <button onclick="resetGame()">다시 도전</button>
+    </div>
+</div>
+
+<script>
+// --- 핵심 설정 ---
+// 같은 폴더에 있는 원본 사진 파일 이름을 정확히 적어주세요.
+const photoFileName = 'brother.png'; 
+// 만약 사진이 jpg라면 'brother.jpg'로 고쳐야 합니다.
+// ----------------
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 600;
+canvas.height = 800;
+
+// 이미지 로딩 상태 체크
+let isPhotoLoaded = false;
+const playerImg = new Image();
+playerImg.src = photoFileName; 
+
+playerImg.onload = () => {
+    isPhotoLoaded = true;
+    console.log("사진 로딩 완료!");
+};
+playerImg.onerror = () => {
+    console.error("사진을 찾을 수 없습니다. 파일 이름과 위치를 확인해주세요: " + photoFileName);
+    alert("사진 파일을 찾을 수 없습니다.\n파일 이름이 '" + photoFileName + "'이고,\nHTML 파일과 같은 폴더에 있는지 확인해주세요.");
+};
+
+// 게임 상태 변수
+let score = 0;
+let lives = 3;
+let gameOver = false;
+let level = 1;
+const keys = {};
+
+// 플레이어 (사진 캐릭터)
+const player = {
+    x: canvas.width / 2 - 60, // 초기 x 위치 (중앙)
+    y: canvas.height - 150, // 초기 y 위치 (하단)
+    w: 120, // 캐릭터 가로 크기
+    h: 150, // 캐릭터 세로 크기
+    speed: 7
+};
+
+// 소주병 총알
+let bullets = [];
+const bulletSpeed = 10;
+
+// 적 (에일리언)
+let enemies = [];
+const enemyRows = 4;
+const enemyCols = 6;
+let enemyDir = 1;
+
+// 입력 이벤트 리스너
+window.onkeydown = (e) => keys[e.key] = true;
+window.onkeyup = (e) => keys[e.key] = false;
+window.addEventListener('keydown', (e) => {
+    if (e.key === ' ' && !gameOver) {
+        // 연속 발사 제한
+        if (bullets.length === 0 || bullets[bullets.length-1].y < player.y - 100) {
+            bullets.push({ x: player.x + player.w/2 - 10, y: player.y, w: 20, h: 50 });
+        }
+    }
+});
+
+// 초기화 함수
+function initEnemies() {
+    enemies = [];
+    for (let r = 0; r < enemyRows; r++) {
+        for (let c = 0; c < enemyCols; c++) {
+            // 레벨에 따라 색상 변경
+            let hue = (level * 40 + r * 20) % 360;
+            enemies.push({
+                x: c * 80 + 70,
+                y: r * 60 + 80,
+                w: 50,
+                h: 50,
+                alive: true,
+                color: `hsl(${hue}, 80%, 60%)`
+            });
+        }
+    }
+}
+
+// 업데이트 루프
+function update() {
+    if (gameOver) return;
+
+    // 플레이어 이동
+    if ((keys['ArrowLeft'] || keys['a']) && player.x > 0) player.x -= player.speed;
+    if ((keys['ArrowRight'] || keys['d']) && player.x < canvas.width - player.w) player.x += player.speed;
+
+    // 소주병 총알 이동
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].y -= bulletSpeed;
+        if (bullets[i].y + bullets[i].height < 0) bullets.splice(i, 1);
+    }
+
+    // 적 이동
+    let edge = false;
+    enemies.forEach(e => {
+        if (!e.alive) return;
+        // 레벨에 따라 속도 증가
+        e.x += (2 + level * 0.5) * enemyDir;
+        if (e.x <= 20 || e.x + e.w >= canvas.width - 20) edge = true;
+        // 게임 오버 조건: 적이 플레이어 라인에 도달
+        if (e.y + e.h >= player.y + 20) gameOver = true;
+    });
+
+    if (edge) {
+        enemyDir *= -1;
+        enemies.forEach(e => e.y += 30); // 한 줄 아래로
+    }
+
+    // 충돌 판정 (내 총알 vs 적)
+    bullets.forEach((b, bi) => {
+        enemies.forEach((e, ei) => {
+            if (e.alive && b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+                e.alive = false;
+                bullets.splice(bi, 1);
+                score += 100 * level;
+                document.getElementById('score').innerText = score;
+            }
+        });
+    });
+
+    // 레벨 클리어 체크
+    if (enemies.every(e => !e.alive)) {
+        level++;
+        initEnemies();
+    }
+
+    if (gameOver) {
+        document.getElementById('game-over').style.display = 'flex';
+    }
+}
+
+// 그리기 루프
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 배경 별 (간단하게)
+    ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+    for(let i=0; i<50; i++) {
+        ctx.fillRect(Math.random()*canvas.width, Math.random()*canvas.height, 2, 2);
+    }
+
+    // 1. 플레이어 (사진) 그리기
+    if (isPhotoLoaded) {
+        // 원본 사진 비율을 유지하면서 그리기
+        const imgRatio = playerImg.width / playerImg.height;
+        let drawW = player.w;
+        let drawH = player.w / imgRatio;
+        
+        // 세로 크기가 너무 크면 세로 기준으로 맞춤
+        if (drawH > player.h) {
+            drawH = player.h;
+            drawW = player.h * imgRatio;
+        }
+
+        ctx.drawImage(playerImg, player.x + (player.w - drawW)/2, player.y + (player.h - drawH)/2, drawW, drawH);
+    } else {
+        // 사진 로딩 전이나 실패 시 임시 도형
+        ctx.fillStyle = "#ffcc99";
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+        ctx.fillStyle = "#fff";
+        ctx.font = "20px sans-serif";
+        ctx.fillText("사진 로딩 중...", player.x + 10, player.y + player.h/2);
+    }
+
+    // 2. 소주병 총알 그리기
+    bullets.forEach(b => {
+        // 소주병 초록색 몸통
+        ctx.fillStyle = "#2ecc71";
+        ctx.fillRect(b.x, b.y + b.h * 0.3, b.w, b.h * 0.7);
+        // 흰색 뚜껑/넥
+        ctx.fillStyle = "white";
+        ctx.fillRect(b.x + b.w * 0.2, b.y, b.w * 0.6, b.h * 0.3);
+        // 라벨
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(b.x + b.w * 0.1, b.y + b.h * 0.5, b.w * 0.8, b.h * 0.3);
+    });
+
+    // 3. 적 그리기 (갤러그 스타일 👾)
+    enemies.forEach(e => {
+        if (!e.alive) return;
+        ctx.fillStyle = e.color;
+        // 본체
+        ctx.fillRect(e.x + e.w*0.2, e.y + e.h*0.2, e.w*0.6, e.h*0.6);
+        // 다리
+        ctx.fillRect(e.x, e.y + e.h*0.6, e.w*0.2, e.h*0.4);
+        ctx.fillRect(e.x + e.w*0.8, e.y + e.h*0.6, e.w*0.2, e.h*0.4);
+        ctx.fillRect(e.x + e.w*0.4, e.y + e.h*0.8, e.w*0.2, e.h*0.2);
+        // 눈
+        ctx.fillStyle = '#000';
+        ctx.fillRect(e.x + e.w*0.3, e.y + e.h*0.4, e.w*0.1, e.h*0.1);
+        ctx.fillRect(e.x + e.w*0.6, e.y + e.h*0.4, e.w*0.1, e.h*0.1);
+    });
+}
+
+// 메인 루프
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+function resetGame() {
+    score = 0;
+    lives = 3;
+    gameOver = false;
+    level = 1;
+    bullets = [];
+    player.x = canvas.width / 2 - player.w/2;
+    document.getElementById('score').innerText = score;
+    document.getElementById('lives').innerText = lives;
+    document.getElementById('game-over').style.display = 'none';
+    initEnemies();
+}
+
+// 게임 시작
+initEnemies();
+gameLoop();
+
+</script>
+</body>
+</html>
